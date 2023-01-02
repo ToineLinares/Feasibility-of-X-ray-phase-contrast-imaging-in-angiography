@@ -1,0 +1,503 @@
+/*******************************************************************************
+*
+* McXtrace, X-ray tracing package
+*         Copyright, All rights reserved
+*         Risoe National Laboratory, Roskilde, Denmark
+*         University of Copenhagen, Copenhagen, Denmark
+*
+* Component: Absorption_sample
+*
+* %I
+*
+* Written by:Erik B Knudsen
+* Date: March 2011
+* Version: 1.0
+* Origin: Risoe
+*
+* Sample component with absorbing materials.
+*
+* %D
+* A sample component consisting of a box/cylinder of one material and a box/cylinder of another 
+* material inside. This is useful as a phantom for simulating tomography experiments.
+*
+* %P
+* Input parameters: 
+* radius_o: [m] Radius of "outer" enclosing material cylinder (0)
+* xwidth_o: [m] Width of "outer" enclosing material box (yheight)
+* yheight_o: [m] Height of "outer enclosing material box (1) 
+* zdepth_o: [m] Thickness of outer enclosing material box (yheight)
+* radius_i: [m] Radius of "inner" enclosed material cylinder (0)
+* xwidth_i: [m] Width of "inner" enclosed material box (yheight)
+* yheight_i: [m] Height of "inner enclosed material (1) 
+* zdepth_i: [m] Thickness of inner enclosed material box (yheight)
+* x_i: [m] center x-coordinate of "inner" object
+* y_i: [m] center y-coordinate of "inner" object
+* z_i: [m] center z-coordinate of "inner" object
+* rho_i: [g/cm^3] density of the enclosed material
+* rho_o: [g/cm^3] density of the enclosing material
+*
+* %E
+*******************************************************************************/
+
+DEFINE COMPONENT Absorption_and_Snells_Inner_Sphere_1
+DEFINITION PARAMETERS (string material_datafile_i="",string material_datafile_o="", string material_datafile_s="")
+SETTING PARAMETERS (radius_o=0,xwidth_o=0,yheight_o=1,zdepth_o=0,radius_i=0,xwidth_i=0,yheight_i=0.0,zdepth_i=0,x_i=0,y_i=0,z_i=0,rho_i=0,rho_o=0, rho_s, radius_s = 0, xwidth_s=0,yheight_s=1,zdepth_s=0, x_s=0,y_s=0,z_s=0)
+OUTPUT PARAMETERS (prms_i,prms_o, prms_s, t_i,t_o, t_s)
+/* X-ray parameters: (x,y,z,kx,ky,kz,phi,t,Ex,Ey,Ez,p) */ 
+
+SHARE
+%{
+  %include "read_table-lib"
+void refract_photon_cyl(double deltaTAB_f, int inter_num_f, double x_f, double y_f, 
+	double z_f, double *kx_f, double *ky_f, double *kz_f, double xyz1[3], double xyz2[3])
+{
+	double c[3], k[3], b1=0, b2=0, b3=0, nk[3], Cyl[3], nCyl[3], refract[3]; 
+	double cosI=0, sub_part=0, sinT2=0, ref=0;
+	double dotxyzc=0, dotcc=0;
+	double part1, part2[3];
+	int i;
+	
+	
+	c[0]=0; // c[]: Vector along axis of cylinder
+	c[1]=1;
+	c[2]=0;
+	
+	k[0] = *kx_f;
+    	k[1] = *ky_f;
+    	k[2] = *kz_f;
+	
+	
+	if (inter_num_f ==1){
+		xyz1[0] = x_f;
+		xyz1[1] = y_f;
+		xyz1[2] = z_f;
+		ref = 1 / deltaTAB_f;
+	}
+	if (inter_num_f == -1){
+		xyz2[0] = x_f;
+		xyz2[1] = y_f;
+		xyz2[2] = z_f;
+		ref = deltaTAB_f / 1;
+	}
+	      /* normalise k vector */
+    b1=0, b2=0;
+    for (i=0; i<=2; i++){
+    	b1 += k[i] * k[i];
+    }    
+	b2 = sqrt(b1);
+
+    for (i=0; i<=2; i++){
+        nk[i] = (k[i]) / (b2);
+    }  
+		 	 
+
+	    /* calculate normal to surface of cylinder */
+	if (inter_num_f == 1){
+		dotxyzc=0;
+		for (i=0; i<=2; i++){
+			dotxyzc += xyz1[i] * c[i]; 
+		}
+       
+		dotcc=0;
+		for (i=0; i<=2; i++){
+			dotcc += c[i] * c[i];
+		}
+       
+		part1 = dotxyzc / dotcc;
+		for (i=0; i<=2; i++){
+			part2[i] = c[i] * part1; 
+		}
+    
+		for (i=0; i<=2; i++){
+			Cyl[i] = xyz1[i] - part2[i]; 
+		}
+       
+    }else if (inter_num_f == -1){
+	    dotxyzc=0;
+		for (i=0; i<=2; i++){
+			dotxyzc += xyz2[i] * c[i]; 
+		}
+       
+		dotcc=0;
+		for (i=0; i<=2; i++){
+			dotcc += c[i] * c[i];
+		}
+       
+		part1 = dotxyzc / dotcc;
+		for (i=0; i<=2; i++){
+			part2[i] = c[i] * part1; 
+		}
+    
+		for (i=0; i<=2; i++){
+			Cyl[i] = xyz2[i] - part2[i]; 
+		}
+    }
+	
+	    
+    /* Normalise the normal to surface of cylinder */       
+    b1 = 0;
+    b3=0;
+    for (i=0; i<=2; i++){
+        b1 += Cyl[i] * Cyl[i];
+    }
+        
+		b3 = sqrt(b1);
+    for (i=0; i<=2; i++){
+        nCyl[i] = inter_num_f * (Cyl[i] / b3);
+    }
+
+    /* Calculate angle of refraction */
+    cosI=0, sub_part=0, sinT2=0;
+    
+    for (i=0; i<=2; i++){
+        cosI += nk[i] * nCyl[i]; // Normalised k vector . normal to cylinder
+    } 
+		
+    sinT2 = ref*ref * (1.0 - cosI*cosI);
+
+       /* Normalised refracted photon */ 
+     if (sinT2 <= 1.0){  
+       
+        for (i=0; i<=2; i++){
+            refract[i] = ref*nk[i] - (ref*cosI + sqrt(1.0 - sinT2)) * nCyl[i];}  
+        }
+       /* Reflection */
+     else{
+        for (i=0; i<=2; i++){
+            refract[i] = nk[i] - 2.0*cosI * nCyl[i];}  
+        }	
+		 
+		 /* Output refracted vector */
+	refract[0] = refract[0]*b2;
+	refract[1] = refract[1]*b2;
+	refract[2] = refract[2]*b2;
+	
+	*kx_f = refract[0];
+    	*ky_f = refract[1];
+    	*kz_f = refract[2]; 
+	} /* refract_photon */
+	
+	
+%}
+
+DECLARE
+%{
+  struct {
+    double Z_A,rho,V;
+    int E_c,l_c,mu_c;
+  } prms_o,prms_i, prms_s;
+  t_Table t_o,t_i,t_s;
+%}
+
+INITIALIZE
+%{
+  int status;
+  prms_i.V = 1;
+  /* Checking volumes */
+
+  if (yheight_o && !radius_o){
+    if (!zdepth_o) zdepth_o=yheight_o;
+    if (!xwidth_o) xwidth_o=yheight_o;
+
+  }else if (!yheight_o && !radius_o){
+    fprintf(stderr,"Absorption_sample(%s): Error: Unmeaningful outer volume description\n",NAME_CURRENT_COMP);
+    exit(0);
+  }
+
+
+  if (yheight_i && !radius_i){
+    if (!zdepth_i) zdepth_i=yheight_i;
+    if (!xwidth_i) xwidth_i=yheight_i;
+  }else if (!yheight_i && !radius_i){
+    fprintf(stderr,"Absorption_sample(%s): Warning: Inner volume = 0\n",NAME_CURRENT_COMP);
+    prms_i.V=0;
+  }
+  /* Loading datafiles */
+  if ( material_datafile_o && (status=Table_Read(&t_o,material_datafile_o,0))==-1){
+    fprintf(stderr,"Error: Could not parse file \"%s\" in COMP %s\n",material_datafile_o,NAME_CURRENT_COMP);
+    exit(-1);
+  }
+  if (t_o.columns==3) {  /*which column is the energy in and which holds mu*/
+    prms_o.E_c=0;prms_o.mu_c=1;
+  }else{
+    prms_o.E_c=0;prms_o.mu_c=5;
+  }
+
+    if ( material_datafile_s && (status=Table_Read(&t_s,material_datafile_s,0))==-1){
+      fprintf(stderr,"Error: Could not parse file \"%s\" in COMP %s\n",material_datafile_i,NAME_CURRENT_COMP);
+      exit(-1);
+    }
+    if (t_s.columns==3) {
+      prms_s.E_c=0;prms_s.mu_c=1;
+    }else{
+      prms_s.E_c=0;prms_s.mu_c=5;
+    }
+
+  if (prms_i.V){ /*if volume is zero - don't bother to read the file*/
+    printf("Loading inner datafiles");
+    if ( material_datafile_i && (status=Table_Read(&t_i,material_datafile_i,0))==-1){
+      fprintf(stderr,"Error: Could not parse file \"%s\" in COMP %s\n",material_datafile_i,NAME_CURRENT_COMP);
+      exit(-1);
+    }
+    if (t_i.columns==3) {
+      prms_i.E_c=0;prms_i.mu_c=1;
+    }else{
+      prms_i.E_c=0;prms_i.mu_c=5;
+    }
+	if(rho_i && rho_o && rho_s == 0){ /*when density is not from input, try to read from tables */
+		char **header_parsed;
+		header_parsed=Table_ParseHeader(t_o.header,"Z","A[r]","rho","Z/A",NULL);
+		if(header_parsed[3]){ /*assuming that a Z/A is given, i.e. Z and A[r] are redundant*/
+			prms_o.Z_A=strtod(header_parsed[3],NULL);
+		}else if ( (strlen(header_parsed[0])) && (strlen(header_parsed[1])) ){
+			prms_o.Z_A=strtod(header_parsed[0],NULL)/strtod(header_parsed[1],NULL);
+		}
+		if(strlen(header_parsed[2])){
+			prms_o.rho=strtod(header_parsed[2],NULL);
+			printf("rho_o %g\n",prms_o.rho);
+		}
+
+		header_parsed=Table_ParseHeader(t_i.header,"Z","A[r]","rho","Z/A",NULL);
+		if(header_parsed[3]){/*assuming that a Z/A is given, i.e. Z and A[r] are redundant*/
+			prms_i.Z_A=strtod(header_parsed[3],NULL);
+		}else if ( (strlen(header_parsed[0])) && (strlen(header_parsed[1])) ){
+			prms_i.Z_A=strtod(header_parsed[0],NULL)/strtod(header_parsed[1],NULL);
+		}
+		if(strlen(header_parsed[2])){
+			prms_i.rho=strtod(header_parsed[2],NULL);
+			printf("rho_i %g\n",prms_i.rho);
+		}
+
+
+		header_parsed=Table_ParseHeader(t_s.header,"Z","A[r]","rho","Z/A",NULL);
+		if(header_parsed[3]){/*assuming that a Z/A is given, i.e. Z and A[r] are redundant*/
+			prms_s.Z_A=strtod(header_parsed[3],NULL);
+		}else if ( (strlen(header_parsed[0])) && (strlen(header_parsed[1])) ){
+			prms_s.Z_A=strtod(header_parsed[0],NULL)/strtod(header_parsed[1],NULL);
+		}
+		if(strlen(header_parsed[2])){
+			prms_s.rho=strtod(header_parsed[2],NULL);
+			printf("rho_s %g\n",prms_s.rho);
+		}
+	}
+	else{ /*read densities from input*/
+		prms_o.rho = rho_o;
+		prms_i.rho = rho_i;
+		prms_s.rho = rho_s;
+	}
+  }
+
+%}
+
+TRACE
+%{
+  double l0o=0,l1o=0,l0i=0,l1i=0, l0s = 0, l1s = 0, mu_o=0,mu_i=0, mu_s = 0;
+  int status,status_i, status_s;
+  double xyz1[3], xyz2[3], refract[3], nk[3];
+  double energy=0, deltaTAB=0;
+  double energy_2 = 0, deltaTAB_2 = 0;
+  double energy_s = 0, deltaTAB_s = 0;
+  double step_size=0.0, X1=0.0, Y1=0.0,Y2=0.0, M=0.0, C=0.0;
+  double step_size_2=0.0, X1_2=0.0, Y1_2=0.0,Y2_2=0.0, M_2=0.0, C_2=0.0;
+  long Index;
+  long Index_2;
+  int inter_num_2 = 0;
+  int inter_num=0;
+
+if (y >= radius_s) || (y <= -radius_s) {	
+  if (radius_o && yheight_o){
+    status=cylinder_intersect(&l0o,&l1o,x,y,z,kx,ky,kz,radius_o,yheight_o);
+  }else{
+    status=box_intersect(&l0o,&l1o,x,y,z,kx,ky,kz,xwidth_o,yheight_o,zdepth_o);
+  }
+  if (status ){ /*rays intersects the enclosing material*/
+    PROP_DL(l0o);
+    SCATTER;
+    double k=sqrt(scalar_prod(kx,ky,kz,kx,ky,kz));
+
+    deltaTAB=Table_Value(t_o,K2E*k,1);
+    if (deltaTAB != 1.0){
+    	deltaTAB = 1.0 - deltaTAB;
+    }
+
+
+    inter_num = 1;
+    refract_photon_cyl(deltaTAB, inter_num, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+
+    status_i=0;
+    if (radius_i && !yheight_i){
+      status_i=sphere_intersect(&l0i,&l1i,(x-x_i),(y-y_i),(z-z_i),kx,ky,kz,radius_i);
+    }else if (radius_i && yheight_i){
+      status_i=cylinder_intersect(&l0i,&l1i,(x-x_i),(y-y_i),(z-z_i),kx,ky,kz,radius_i,yheight_i);
+    }else if (xwidth_i && yheight_i && zdepth_i){
+      status_i=box_intersect(&l0i,&l1i,(x-x_i),(y-y_i),(z-z_i),kx,ky,kz,xwidth_i,yheight_i,zdepth_i);
+    }
+    if(status_i){ /*rays intersect the inclusion*/
+      PROP_DL(l0i);
+      SCATTER;
+    double k_2=sqrt(scalar_prod(kx,ky,kz,kx,ky,kz));
+    deltaTAB_2=Table_Value(t_i,K2E*k_2,1);
+
+    if (deltaTAB_2 != 1.0){
+    	deltaTAB_2 = 1.0 - deltaTAB_2;
+    }
+    inter_num_2 = 1;
+    refract_photon_cyl(deltaTAB_2, inter_num_2, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+
+
+
+
+
+
+
+      PROP_DL(l1i-l0i);
+      SCATTER;
+    inter_num_2 = -1;
+    refract_photon_cyl(deltaTAB_2, inter_num_2, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+
+      /*now calculate the mu*/
+	double k_3=sqrt(scalar_prod(kx,ky,kz,kx,ky,kz));
+      mu_i=Table_Value(t_i,k_3*K2E,prms_i.mu_c)*prms_i.rho;
+      p*=exp(-(l1i-l0i)*mu_i*1e2); /* 1e2 to have in m unit */
+    }
+    PROP_DL(l1o-l0o-l1i);
+    SCATTER;
+    inter_num = -1;
+    double k_4=sqrt(scalar_prod(kx,ky,kz,kx,ky,kz));
+    refract_photon_cyl(deltaTAB, inter_num, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+    mu_o=Table_Value(t_o,k_4*K2E,prms_o.mu_c)*prms_o.rho;
+    p*=exp(-(l1o-l0o-(l1i-l0i))*mu_o*1e2);
+  }
+
+}
+
+else if (y >= -radius_s) && (y <= radius_s) && (x <= radius_s) && (x >= -radius_s){
+  if (radius_o && yheight_o){
+    status=cylinder_intersect(&l0o,&l1o,x,y,z,kx,ky,kz,radius_o,yheight_o);
+  }else{
+    status=box_intersect(&l0o,&l1o,x,y,z,kx,ky,kz,xwidth_o,yheight_o,zdepth_o);
+  }
+  if (status ){ /*rays intersects the enclosing material*/
+    PROP_DL(l0o);
+    SCATTER;
+    double k=sqrt(scalar_prod(kx,ky,kz,kx,ky,kz));
+
+    deltaTAB=Table_Value(t_o,K2E*k,1);
+    if (deltaTAB != 1.0){
+    	deltaTAB = 1.0 - deltaTAB;
+    }
+
+
+    inter_num = 1;
+    refract_photon_cyl(deltaTAB, inter_num, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+
+    status_i=0;
+    if (radius_i && !yheight_i){
+      status_i=sphere_intersect(&l0i,&l1i,(x-x_i),(y-y_i),(z-z_i),kx,ky,kz,radius_i);
+    }else if (radius_i && yheight_i){
+      status_i=cylinder_intersect(&l0i,&l1i,(x-x_i),(y-y_i),(z-z_i),kx,ky,kz,radius_i,yheight_i);
+    }else if (xwidth_i && yheight_i && zdepth_i){
+      status_i=box_intersect(&l0i,&l1i,(x-x_i),(y-y_i),(z-z_i),kx,ky,kz,xwidth_i,yheight_i,zdepth_i);
+    }
+    if(status_i){ /*rays intersect the inclusion*/
+      PROP_DL(l0i);
+      SCATTER;
+    double k_2=sqrt(scalar_prod(kx,ky,kz,kx,ky,kz));
+    deltaTAB_2=Table_Value(t_i,K2E*k_2,1);
+
+    if (deltaTAB_2 != 1.0){
+    	deltaTAB_2 = 1.0 - deltaTAB_2;
+    }
+    inter_num_2 = 1;
+    refract_photon_cyl(deltaTAB_2, inter_num_2, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+
+
+
+    status_s = 0;
+    if (radius_s && !yheight_s){
+      status_s=sphere_intersect(&l0s,&l1s,(x-x_s),(y-y_s),(z-z_s),kx,ky,kz,radius_s);
+	}
+    else if(xwidth_s && zdepth_s && yheight_s){
+      status_s = box_intersect(&l0s,&l1s,(x-x_s),(y-y_s),(z-z_s),kx,ky,kz, xwidth_s, yheight_s, zdepth_s);
+	}
+    if (status_s){/*rays intersect the sphere within inclusion*/
+      PROP_DL(l0s);
+      SCATTER;
+    double k_s=sqrt(scalar_prod(kx,ky,kz,kx,ky,kz));
+    deltaTAB_s=Table_Value(t_s,K2E*k_s,1);
+
+    if (deltaTAB_s != 1.0){
+    	deltaTAB_s = 1.0 - deltaTAB_s;
+    }
+    inter_num_s = 1;
+    refract_photon_cyl(deltaTAB_s, inter_num_s, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+    PROP_DL(l1s - l0s);
+    SCATTER;
+    inter_num_s = -1;
+    refract_photon_cyl(deltaTAB_s, inter_num_s, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+	double k_2s=sqrt(scalar_prod(kx,ky,kz,kx,ky,kz));
+      mu_s=Table_Value(t_s,k_2s*K2E,prms_s.mu_c)*prms_s.rho;
+      p*=exp(-(l1s-l0s)*mu_s*1e2); /* 1e2 to have in m unit */
+
+    }
+
+      PROP_DL(l1i - l0i - l1s);
+      SCATTER;
+
+
+    inter_num_2 = -1;
+    refract_photon_cyl(deltaTAB_2, inter_num_2, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+
+      /*now calculate the mu*/
+	double k_3=sqrt(scalar_prod(kx,ky,kz,kx,ky,kz));
+      mu_i=Table_Value(t_i,k_3*K2E,prms_i.mu_c)*prms_i.rho;
+      p*=exp(-((l1i-l0i) -(l1s-l0s))*mu_i*1e2); /* 1e2 to have in m unit */
+    }
+    PROP_DL(l1o-l0o-l1i);
+    SCATTER;
+    inter_num = -1;
+    double k_4=sqrt(scalar_prod(kx,ky,kz,kx,ky,kz));
+    refract_photon_cyl(deltaTAB, inter_num, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+    mu_o=Table_Value(t_o,k_4*K2E,prms_o.mu_c)*prms_o.rho;
+    p*=exp(-(l1o-l0o-(l1i-l0i))*mu_o*1e2);
+  }
+
+
+}
+%}
+
+MCDISPLAY
+%{
+  /* A bit ugly; hard-coded dimensions. */
+  
+  if (radius_o && yheight_o){
+    circle("xz",0, yheight_o/2.0,0,radius_o);
+    circle("xz",0,-yheight_o/2.0,0,radius_o);
+    line(-radius_o,-yheight_o/2.0,0,-radius_o,yheight_o/2.0,0);
+    line( radius_o,-yheight_o/2.0,0, radius_o,yheight_o/2.0,0);
+    line(0,-yheight_o/2.0,-radius_o,0,yheight_o/2.0,-radius_o);
+    line(0,-yheight_o/2.0, radius_o,0,yheight_o/2.0, radius_o);
+  }else{
+    box(0,0,0,xwidth_o,yheight_o,zdepth_o);
+  }
+
+  if (prms_i.V){
+    if(radius_i && !yheight_i){
+      circle("xz",x_i,y_i,z_i,radius_i);
+      circle("yz",x_i,y_i,z_i,radius_i);
+      circle("xy",x_i,y_i,z_i,radius_i);   
+    }else if (radius_i && yheight_i){
+      circle("xz",x_i,z_i+yheight_i/2.0,z_i,radius_i);
+      circle("xz",x_i,z_i-yheight_i/2.0,z_i,radius_i);
+      line(x_i-radius_i,y_i-yheight_i/2.0,z_i,x_i-radius_i,yheight_i/2.0,z_i);
+      line(x_i+radius_i,y_i-yheight_i/2.0,z_i,x_i+radius_i,yheight_i/2.0,z_i);
+      line(x_i,y_i-yheight_i/2.0,z_i-radius_i,x_i,y_i+yheight_i/2.0,z_i-radius_i);
+      line(x_i,y_i-yheight_i/2.0,z_i+radius_i,x_i,y_i+yheight_i/2.0,z_i+radius_i);
+    }else{
+      box(x_i,y_i,z_i,xwidth_i,yheight_i,zdepth_i);
+    }
+  }
+%}
+
+END
+

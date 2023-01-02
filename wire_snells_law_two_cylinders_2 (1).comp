@@ -1,0 +1,399 @@
+/*******************************************************************************
+*
+* Component: wire_snells_law
+*
+* %Introduction
+*
+* Written by: Tom Millard
+* Date: October 2013
+* Origin: UCL
+*
+*
+* 
+*******************************************************************************/
+
+
+DEFINE COMPONENT wire_snells_law_two_cylinders_2
+
+DEFINITION PARAMETERS (string materialdata= NULL,string materialdata_2 = NULL)
+SETTING PARAMETERS (radius = 0, radius_2 = 0, yheight = 1, yheight_2 = 1, x_i = 0, y_i = 0, z_i = 0)
+
+OUTPUT PARAMETERS (refTable, refTable_2)
+
+/* STATE PARAMETERS (x,y,z,kx,ky,kz,phi,t,Ex,Ey,Ez,p) */
+
+SHARE
+%{
+  %include "read_table-lib"
+
+	
+/* The following function calculates refraction as the photon passes over a boundary
+ *  of a sphere. The parameter inter_num_f determines whether the photon is entering 
+ * (1) or leaving the sphere (-1)
+ */
+
+void refract_photon_cyl(double deltaTAB_f, int inter_num_f, double x_f, double y_f, 
+	double z_f, double *kx_f, double *ky_f, double *kz_f, double xyz1[3], double xyz2[3])
+{
+	double c[3], k[3], b1=0, b2=0, b3=0, nk[3], Cyl[3], nCyl[3], refract[3]; 
+	double cosI=0, sub_part=0, sinT2=0, ref=0;
+	double dotxyzc=0, dotcc=0;
+	double part1, part2[3];
+	int i;
+	
+	
+	c[0]=0; // c[]: Vector along axis of cylinder
+	c[1]=1;
+	c[2]=0;
+	
+	k[0] = *kx_f;
+    	k[1] = *ky_f;
+    	k[2] = *kz_f;
+	
+	
+	if (inter_num_f ==1){
+		xyz1[0] = x_f;
+		xyz1[1] = y_f;
+		xyz1[2] = z_f;
+		ref = 1 / deltaTAB_f;
+	}
+	if (inter_num_f == -1){
+		xyz2[0] = x_f;
+		xyz2[1] = y_f;
+		xyz2[2] = z_f;
+		ref = deltaTAB_f / 1;
+	}
+	      /* normalise k vector */
+    b1=0, b2=0;
+    for (i=0; i<=2; i++){
+    	b1 += k[i] * k[i];
+    }    
+	b2 = sqrt(b1);
+
+    for (i=0; i<=2; i++){
+        nk[i] = (k[i]) / (b2);
+    }  
+		 	 
+
+	    /* calculate normal to surface of cylinder */
+	if (inter_num_f == 1){
+		dotxyzc=0;
+		for (i=0; i<=2; i++){
+			dotxyzc += xyz1[i] * c[i]; 
+		}
+       
+		dotcc=0;
+		for (i=0; i<=2; i++){
+			dotcc += c[i] * c[i];
+		}
+       
+		part1 = dotxyzc / dotcc;
+		for (i=0; i<=2; i++){
+			part2[i] = c[i] * part1; 
+		}
+    
+		for (i=0; i<=2; i++){
+			Cyl[i] = xyz1[i] - part2[i]; 
+		}
+       
+    }else if (inter_num_f == -1){
+	    dotxyzc=0;
+		for (i=0; i<=2; i++){
+			dotxyzc += xyz2[i] * c[i]; 
+		}
+       
+		dotcc=0;
+		for (i=0; i<=2; i++){
+			dotcc += c[i] * c[i];
+		}
+       
+		part1 = dotxyzc / dotcc;
+		for (i=0; i<=2; i++){
+			part2[i] = c[i] * part1; 
+		}
+    
+		for (i=0; i<=2; i++){
+			Cyl[i] = xyz2[i] - part2[i]; 
+		}
+    }
+	
+	    
+    /* Normalise the normal to surface of cylinder */       
+    b1 = 0;
+    b3=0;
+    for (i=0; i<=2; i++){
+        b1 += Cyl[i] * Cyl[i];
+    }
+        
+		b3 = sqrt(b1);
+    for (i=0; i<=2; i++){
+        nCyl[i] = inter_num_f * (Cyl[i] / b3);
+    }
+
+    /* Calculate angle of refraction */
+    cosI=0, sub_part=0, sinT2=0;
+    
+    for (i=0; i<=2; i++){
+        cosI += nk[i] * nCyl[i]; // Normalised k vector . normal to cylinder
+    } 
+		
+    sinT2 = ref*ref * (1.0 - cosI*cosI);
+
+       /* Normalised refracted photon */ 
+     if (sinT2 <= 1.0){  
+       
+        for (i=0; i<=2; i++){
+            refract[i] = ref*nk[i] - (ref*cosI + sqrt(1.0 - sinT2)) * nCyl[i];}  
+        }
+       /* Reflection */
+     else{
+        for (i=0; i<=2; i++){
+            refract[i] = nk[i] - 2.0*cosI * nCyl[i];}  
+        }	
+		 
+		 /* Output refracted vector */
+	refract[0] = refract[0]*b2;
+	refract[1] = refract[1]*b2;
+	refract[2] = refract[2]*b2;
+	
+	*kx_f = refract[0];
+    	*ky_f = refract[1];
+    	*kz_f = refract[2]; 
+	} /* refract_photon */
+	
+	
+	
+ /* The following function calculates the photon weight after the distance
+  * it has passed through the wire. It calculates this from the energy and
+  * beta value of the wire at this energy.
+ */	 
+void transmittance(double betaTAB_f, double energy_f,  double *kx_f, double *ky_f, double *kz_f, double xyz1[3], double xyz2[3], double *p_f)
+{
+	double abs_dis1[3], abs_dis2=0, abs_dis3=0, lambda=0, mu=0, expo_f=0, p2=0;
+	int i;
+	
+	p2 = *p_f; 
+	lambda = 1.23984193e-9/ energy_f; //energy in KeV, const=(h*c)/(1KeV in J)
+	mu = (4.0 *PI * betaTAB_f) / lambda;
+		
+	for (i=0; i<=2; i++){
+		abs_dis1[i] = xyz2[i] - xyz1[i];}
+	
+	for (i=0; i<=2; i++){
+		abs_dis2 += abs_dis1[i] * abs_dis1[i];} // Changing the end of this for loop to here as opposed to the next line (Ian 8/1/18)
+		abs_dis3 = sqrt(abs_dis2);
+		
+	expo_f = exp(-abs_dis3 * mu);
+	/*printf("\n\n distance through wire = %e \n",abs_dis3);	
+	printf("energy = %e \n",energy_f);
+	printf("betaTAB_f = %e \n",betaTAB_f);
+	printf("lambda = %e \n",lambda);
+	printf("mu = %e \n",mu);*/
+	p2 *= expo_f;
+	*p_f = p2;
+}/* transmittance */
+	
+	
+%}
+
+DECLARE
+%{
+
+	double xmax,ymax,xmin,ymin;
+	double xmax_2, ymax_2, xmin_2, ymin_2;
+  	t_Table refTable; /* Data table structure from beta data file*/
+	t_Table refTable_2;
+%}
+
+
+INITIALIZE
+%{
+   	if(materialdata){
+          Table_Read(&refTable, materialdata, 1);
+        }	
+        if(materialdata_2){
+          Table_Read(&refTable_2, materialdata_2, 1);
+        }	
+%}
+
+TRACE
+%{
+	double Lo, Li, xyz1[3], xyz2[3], refract[3], nk[3], sphere[3], nsphere[3], expo;
+	double energy=0, deltaTAB=0, betaTAB=0;
+	double energy_2 = 0, deltaTAB_2 = 0, betaTAB_2 = 0;
+	double step_size=0.0, X1=0.0, Y1=0.0,Y2=0.0, M=0.0, C=0.0;
+	double step_size_2=0.0, X1_2=0.0, Y1_2=0.0,Y2_2=0.0, M_2=0.0, C_2=0.0;
+	long Index;
+	long Index_2;
+	int status_2 = 0, inter_num_2 = 0;
+	int status=0,inter_num=0;
+	
+	/* FIRST INTERACTION */
+        if ((y > radius_2)||(y < -radius_2)){
+          if (cylinder_intersect(&Lo,&Li,x,y,z,kx,ky,kz,radius,yheight)){
+
+            /* IF THERE IS AN INTERACTION FIND ENERGY AND GET DELTA VALUE */
+            energy = K2E * sqrt(kx*kx + ky*ky + kz*kz);
+            /* FIRST FIND INDEX IN TABLE BEFORE THAT ENERGY */
+            // [0][0] - [1][0] = step, energy in first column
+/*            step_size = refTable.data[3]-refTable.data[0]; */
+/*            Index = (long)floor((energy - refTable.min_x)*/
+/*                /(refTable.max_x - refTable.min_x)*/
+/*                *(refTable.rows-1));*/
+            /* DELTA IS IN SECOND COLUMN */
+/*            X1 = refTable.data[Index*3]; */
+/*            Y1 = refTable.data[Index*3+1];*/
+/*            Y2 = refTable.data[(Index+1)*3+1];*/
+/*            M = (Y2-Y1)/step_size;*/
+/*            C = Y1 - M*X1;*/
+/*            deltaTAB = M*energy+C;*/
+            deltaTAB=Table_Value(refTable,energy,1);
+            if (deltaTAB != 1.0){
+              deltaTAB = 1.0 - deltaTAB;
+            }
+
+            /* PROPAGATE TO CYLINDER AND PERFORM FIRST REFRACTION */
+            PROP_DL(Lo);
+            inter_num = 1;
+            refract_photon_cyl(deltaTAB, inter_num, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+
+            /* SECOND INTERACTION */
+            if (cylinder_intersect(&Lo,&Li,x,y,z,kx,ky,kz,radius,yheight)){
+
+              /* IF THERE IS A SECOND INTERACTION GET BETA VAL */
+/*              Y1 = refTable.data[Index*3+2]; // Beta value in 3rd column*/
+/*              Y2 = refTable.data[(Index+1)*3+2];*/
+/*              M = (Y2-Y1)/step_size;*/
+/*              C = Y1 - M*X1;*/
+/*              betaTAB = M*energy+C;*/
+              betaTAB = Table_Value(refTable,energy,2);
+
+              PROP_DL(Li);
+              inter_num = -1;
+              refract_photon_cyl(deltaTAB, inter_num, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+
+              /* CALCULATION OF TRANSMITTANCE IF SECOND INTERACTION*/
+              transmittance(betaTAB, energy, &kx, &ky, &kz, xyz1, xyz2, &p);
+              if (p <= 0){
+                ABSORB;
+              }
+              /* For any photons which may interact more than twice */
+              status = cylinder_intersect(&Lo,&Li,x,y,z,kx,ky,kz,radius,yheight);	
+              if (status && Lo > 0 && Li > 0){
+                ABSORB;
+              } 	
+
+            } 
+          }
+          //if(isnan(p)){printf("hw2-p\n");}
+        }
+        else{
+          if (cylinder_intersect(&Lo, &Li, x,y,z,kx,ky,kz,radius,yheight)){
+            /* IF THERE IS AN INTERACTION FIND ENERGY AND GET DELTA VALUE */
+            energy = K2E * sqrt(kx*kx + ky*ky + kz*kz);
+            /* FIRST FIND INDEX IN TABLE BEFORE THAT ENERGY */
+            // [0][0] - [1][0] = step, energy in first column
+/*            step_size = refTable.data[3]-refTable.data[0]; */
+/*            Index = (long)floor((energy - refTable.min_x)*/
+/*                /(refTable.max_x - refTable.min_x)*/
+/*                *(refTable.rows-1));*/
+            /* DELTA IS IN SECOND COLUMN */
+/*            X1 = refTable.data[Index*3]; */
+/*            Y1 = refTable.data[Index*3+1];*/
+/*            Y2 = refTable.data[(Index+1)*3+1];*/
+/*            M = (Y2-Y1)/step_size;*/
+/*            C = Y1 - M*X1;*/
+/*            deltaTAB = M*energy+C;*/
+            deltaTAB=Table_Value(refTable,energy,1);
+            if (deltaTAB != 1.0){
+              deltaTAB = 1.0 - deltaTAB;
+            }
+
+            /* PROPAGATE TO CYLINDER AND PERFORM FIRST REFRACTION */
+            PROP_DL(Lo);
+            inter_num = 1;
+            refract_photon_cyl(deltaTAB, inter_num, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+
+            if (cylinder_intersect(&Lo, &Li, x,y,z,kx,ky,kz,radius_2,yheight_2)){
+
+              energy_2 = K2E * sqrt(kx*kx + ky*ky + kz*kz);
+/*              step_size_2 = refTable_2.data[3]-refTable_2.data[0];*/
+/*              Index_2 = (long)floor((energy_2 - refTable_2.min_x)/(refTable_2.max_x - refTable_2.min_x)*(refTable_2.rows-1));*/
+/*              X1_2 = refTable_2.data[Index_2*3]; */
+/*              Y1_2 = refTable_2.data[Index_2*3+1];*/
+/*              Y2_2 = refTable_2.data[(Index_2+1)*3+1];*/
+/*              M_2 = (Y2_2-Y1_2)/step_size_2;*/
+/*              C_2 = Y1_2 - M_2*X1_2;*/
+/*              deltaTAB_2 = M_2*energy_2+C_2;*/
+              deltaTAB_2=Table_Value(refTable_2,energy_2,1);
+              if (deltaTAB_2 != 1.0){
+                deltaTAB_2 = 1.0 - deltaTAB_2;
+              }
+              PROP_DL(Lo);
+              inter_num_2 = 1;
+              refract_photon_cyl(deltaTAB_2, inter_num_2, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+
+              if (cylinder_intersect(&Lo,&Li,x,y,z,kx,ky,kz,radius_2,yheight_2)){
+                /* IF THERE IS A SECOND INTERACTION GET BETA VAL */
+/*                Y1_2 = refTable_2.data[Index_2*3+2]; // Beta value in 3rd column*/
+/*                Y2_2 = refTable_2.data[(Index_2+1)*3+2];*/
+/*                M_2 = (Y2_2-Y1_2)/step_size_2;*/
+/*                C_2 = Y1_2 - M_2*X1_2;*/
+/*                betaTAB_2 = M_2*energy_2+C_2;*/
+                betaTAB_2=Table_Value(refTable_2,energy_2,2);
+
+                PROP_DL(Li);
+                inter_num_2 = -1;
+                refract_photon_cyl(deltaTAB_2, inter_num_2, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+
+                /* CALCULATION OF TRANSMITTANCE IF SECOND INTERACTION*/
+                //transmittance(betaTAB_2, energy_2, &kx, &ky, &kz, xyz1, xyz2, &p);
+                if (p <= 0){
+                  ABSORB;
+                }
+                /* For any photons which may interact more than twice */
+                status_2 = cylinder_intersect(&Lo,&Li,x,y,z,kx,ky,kz,radius_2,yheight_2);	
+                if (status_2 && Lo > 0 && Li > 0){
+                  ABSORB;
+                } 	
+
+              }
+
+            }
+
+            if (cylinder_intersect(&Lo,&Li,x,y,z,kx,ky,kz,radius,yheight)){
+
+              /* IF THERE IS A SECOND INTERACTION GET BETA VAL */
+/*              Y1 = refTable.data[Index*3+2]; // Beta value in 3rd column*/
+/*              Y2 = refTable.data[(Index+1)*3+2];*/
+/*              M = (Y2-Y1)/step_size;*/
+/*              C = Y1 - M*X1;*/
+/*              betaTAB = M*energy+C;*/
+              betaTAB = Table_Value(refTable,energy,2);
+
+              PROP_DL(Li);
+              inter_num = -1;
+              refract_photon_cyl(deltaTAB, inter_num, x, y, z, &kx, &ky, &kz, xyz1, xyz2);
+
+              /* CALCULATION OF TRANSMITTANCE IF SECOND INTERACTION*/
+              transmittance(betaTAB, energy, &kx, &ky, &kz, xyz1, xyz2, &p);
+              if (p <= 0){
+                ABSORB;
+              }
+              /* For any photons which may interact more than twice */
+              status = cylinder_intersect(&Lo,&Li,x,y,z,kx,ky,kz,radius,yheight);	
+              if (status && Lo > 0 && Li > 0){
+                ABSORB;
+              } 	
+
+            } 
+          } 
+          //if(isnan(p)){printf("hw2-p\n");}
+
+        }
+
+
+
+%}  
+	
+END
